@@ -14,12 +14,36 @@ import { logError } from './log.js'
 import { getPlatform } from './platform.js'
 import { countCharInString } from './stringUtils.js'
 
-const __filename = fileURLToPath(import.meta.url)
-// we use node:path.join instead of node:url.resolve because the former doesn't encode spaces
-const __dirname = path.join(
-  __filename,
-  process.env.NODE_ENV === 'test' ? '../../../' : '../',
-)
+/**
+ * Directory used to resolve `vendor/ripgrep` (normally repo `src/`; project root in tests).
+ * esbuild CJS bundles sometimes emit `import.meta` as `{}` in `__esm` chunks, so `url` is missing;
+ * then we infer from the real entry script path (`process.argv[1]` → `dist/cli.cjs` → `../src`).
+ */
+function getRipgrepVendorParentDir(): string {
+  const metaUrl = (import.meta as { url?: string }).url
+  if (metaUrl) {
+    const file = fileURLToPath(metaUrl)
+    // we use node:path.join instead of node:url.resolve because the former doesn't encode spaces
+    return path.join(
+      file,
+      process.env.NODE_ENV === 'test' ? '../../../' : '../',
+    )
+  }
+  const entry = process.argv[1]
+  if (!entry) {
+    throw new Error(
+      'Cannot resolve ripgrep vendor path: import.meta.url is missing and process.argv[1] is empty',
+    )
+  }
+  const bundlePath = path.resolve(entry)
+  const distDir = path.dirname(bundlePath)
+  if (process.env.NODE_ENV === 'test') {
+    return path.join(distDir, '..')
+  }
+  return path.join(distDir, '..', 'src')
+}
+
+const rgVendorParentDir = getRipgrepVendorParentDir()
 
 type RipgrepConfig = {
   mode: 'system' | 'builtin' | 'embedded'
@@ -55,7 +79,7 @@ const getRipgrepConfig = memoize((): RipgrepConfig => {
     }
   }
 
-  const rgRoot = path.resolve(__dirname, 'vendor', 'ripgrep')
+  const rgRoot = path.resolve(rgVendorParentDir, 'vendor', 'ripgrep')
   const command =
     process.platform === 'win32'
       ? path.resolve(rgRoot, `${process.arch}-win32`, 'rg.exe')

@@ -37,13 +37,24 @@ function patchFile(filePath) {
   let src = fs.readFileSync(filePath, 'utf8')
   let changed = false
 
+  // Repair merged statements (newline was eaten by a previous \s* in stub path regex)
+  if (/stubs\/bun-bundle\.js['"]\s*(?:import|export)\b/.test(src)) {
+    src = src.replace(
+      /(stubs\/bun-bundle\.js)(['"])\s*(import|export)\b/g,
+      '$1$2\n$3',
+    )
+    changed = true
+  }
+
   // 1. Replace `import { feature } from 'bun:bundle'` / `"bun:bundle"`
   if (src.includes("from 'bun:bundle'") || src.includes('from "bun:bundle"')) {
     src = src.replace(/import\s*\{\s*feature\s*\}\s*from\s*['"]bun:bundle['"]/g,
       "import { feature } from '../stubs/bun-bundle.js'")
     // Fix relative depth based on file location
     const rel = path.relative(SRC, path.dirname(filePath))
-    const depth = rel ? '../'.repeat(rel.split('/').length) : ''
+    const n = rel ? rel.split(/[/\\]/).filter(Boolean).length : 0
+    // src/foo.ts → ../stubs ; src/a/b.ts → ../../../stubs (up through each subdir + out of src/)
+    const depth = n > 0 ? '../'.repeat(n + 1) : ''
     if (depth) {
       src = src.replace("from '../stubs/bun-bundle.js'", `from '${depth}stubs/bun-bundle.js'`)
     }
@@ -67,6 +78,22 @@ function patchFile(filePath) {
       src = src.replace(new RegExp(`(?<![\\w'"])${macro.replace('.', '\\.')}(?![\\w'" ])`, 'g'), replacement)
       changed = true
     }
+  }
+
+  // Normalize `stubs/bun-bundle.js` import depth (idempotent; fixes nested dirs)
+  if (src.includes('stubs/bun-bundle.js')) {
+    const rel = path.relative(SRC, path.dirname(filePath))
+    const n = rel ? rel.split(/[/\\]/).filter(Boolean).length : 0
+    const want = '../'.repeat(n + 1)
+    // Only horizontal whitespace after closing quote — never eat newlines
+    const stubImportRe =
+      /import\s*\{\s*feature\s*\}\s*from\s*(['"])((?:\.\.\/)+)stubs\/bun-bundle\.js\1[ \t]*;?/g
+    const next = src.replace(stubImportRe, (full, q, got) => {
+      if (got === want) return full
+      changed = true
+      return `import { feature } from ${q}${want}stubs/bun-bundle.js${q}`
+    })
+    src = next
   }
 
   if (changed) {

@@ -1,5 +1,4 @@
-import { feature } from 'bun:bundle'
-
+import { feature } from '../../../stubs/bun-bundle.js'
 export const DESCRIPTION = 'Send a message to another agent'
 
 export function getPrompt(): string {
